@@ -39,7 +39,6 @@ static uint64_t unique_trans_id = 0; /* unique id assigned to TB */
 static uint64_t inst_count = 0; /* executed instruction count */
 
 static gzFile bbv_file;
-static std::ofstream pc_file;
 
 /*
  * Counting Structure
@@ -54,7 +53,6 @@ public:
     uint64_t start_addr;
     uint64_t exec_count;
     uint64_t id;
-    uint64_t pc;
     int      trans_count;
     unsigned long insns;
 
@@ -87,24 +85,17 @@ static void plugin_exit(qemu_plugin_id_t id, void *p)
 
     lock.unlock();
     gzclose(bbv_file);
-    pc_file.close();
 }
 
 static void plugin_init(std::string& bench_name)
 {
     std::string bbv_file_name = bench_name + "_bbv.gz";
-    std::string pc_file_name  = bench_name + "_pc.txt";
-
     bbv_file = gzopen(bbv_file_name.c_str(), "w");
-    pc_file.open(pc_file_name.c_str(), std::ofstream::out);
-
     hotblocks = g_hash_table_new(NULL, g_direct_equal);
 }
 
 static void tb_exec(unsigned int cpu_index, void *udata)
 {
-    static int interval_cnt = 0;
-
     lock.lock();
     if (inst_count >= INTERVAL_SIZE) {
         std::ostringstream bb_stat;
@@ -123,8 +114,6 @@ static void tb_exec(unsigned int cpu_index, void *udata)
             bb_stat << "T";
             while (tb_count < 100) {
                 ExecCount *rec = (ExecCount *) it->data;
-                pc_file << std::dec << interval_cnt << ":O:" << std::hex << "0x" << rec->pc << " counts:" << std::dec << rec->exec_count << std::endl;
-                pc_file << std::dec << interval_cnt << ":N:" << std::hex << "0x" << hotblocks_vec[tb_count].pc << " counts:" << std::dec << hotblocks_vec[tb_count].exec_count << std::endl;
                 tb_count++;
 
                 if (rec->exec_count) {
@@ -137,7 +126,6 @@ static void tb_exec(unsigned int cpu_index, void *udata)
             bb_stat << std::endl;
             gzwrite(bbv_file, bb_stat.str().c_str(), bb_stat.str().length());
             inst_count = 0;
-            interval_cnt++;
         }
     }
     lock.unlock();
@@ -163,7 +151,6 @@ static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
         cnt->trans_count = 1;
         cnt->id = ++unique_trans_id;
         cnt->insns = insns;
-        cnt->pc = pc;
         g_hash_table_insert(hotblocks, (gpointer) hash, (gpointer) cnt);
     }
 
