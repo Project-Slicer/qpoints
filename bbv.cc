@@ -87,8 +87,6 @@ static void plugin_init(const std::string &bench_name) {
 static void tb_exec(unsigned int cpu_index, void *udata) {
   lock.lock();
   if (inst_count >= INTERVAL_SIZE) {
-    int tb_count = 0;
-
     std::vector<ExecCount> hotblocks_vec;
     std::transform(hotblocks_map.begin(), hotblocks_map.end(),
                    std::back_inserter(hotblocks_vec),
@@ -100,15 +98,13 @@ static void tb_exec(unsigned int cpu_index, void *udata) {
     if (it) {
       std::ostringstream bb_stat;
       bb_stat << "T";
-      while (tb_count < 100) {
-        auto rec = reinterpret_cast<ExecCount *>(it->data);
-        tb_count++;
 
+      for (; it; it = it->next) {
+        auto rec = reinterpret_cast<ExecCount *>(it->data);
         if (rec->exec_count) {
           bb_stat << " :" << rec->id << ":" << rec->exec_count * rec->insns;
           rec->exec_count = 0;
         }
-        it = it->next;
       }
 
       bb_stat << std::endl;
