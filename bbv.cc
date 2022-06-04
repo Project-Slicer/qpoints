@@ -30,6 +30,9 @@ extern "C" {
 
 QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
+/* Command line arguments */
+static uint64_t kva_start, ckpt_func_start, ckpt_func_len;
+
 /* Plugins need to take care of their own locking */
 static std::mutex lock;
 static GHashTable *hotblocks;
@@ -67,6 +70,58 @@ static gint cmp_exec_count(gconstpointer a, gconstpointer b) {
   return (ea->exec_count * ea->insns) > (eb->exec_count * eb->insns) ? -1 : 1;
 }
 
+static void show_usage() {
+  std::cerr << "Available options:" << std::endl;
+  std::cerr << "  kva=<kernel VA start>" << std::endl;
+  std::cerr << "  ckpt_start=<checkpoint func start>" << std::endl;
+  std::cerr << "  ckpt_len=<checkpoint func len>" << std::endl;
+  std::cerr << "  [name=<bench name>]" << std::endl;
+}
+
+static bool parse_args(int argc, char **argv, std::string &bench_name) {
+#define STARTS_WITH(str, prefix) \
+  (strncmp(str, prefix "=", sizeof(prefix "=") - 1) == 0)
+#define VALUE_OF(str, prefix) (str + sizeof(prefix "=") - 1)
+#define PARSE_ULL(var, str, prefix, prompt)                              \
+  do {                                                                   \
+    char *p;                                                             \
+    var = strtoull(VALUE_OF(str, prefix), &p, 0);                        \
+    if (*p != '\0') {                                                    \
+      std::cerr << "Invalid " << prompt << ": " << VALUE_OF(str, prefix) \
+                << std::endl;                                            \
+      return false;                                                      \
+    }                                                                    \
+  } while (0)
+
+  for (int i = 0; i < argc; ++i) {
+    if (STARTS_WITH(argv[i], "kva")) {
+      PARSE_ULL(kva_start, argv[i], "kva", "kernel VA start");
+    } else if (STARTS_WITH(argv[i], "ckpt_start")) {
+      PARSE_ULL(ckpt_func_start, argv[i], "ckpt_start",
+                "checkpoint func start");
+    } else if (STARTS_WITH(argv[i], "ckpt_len")) {
+      PARSE_ULL(ckpt_func_len, argv[i], "ckpt_len", "checkpoint func len");
+    } else if (STARTS_WITH(argv[i], "name")) {
+      bench_name = VALUE_OF(argv[i], "name");
+    } else {
+      std::cerr << "Unknown option: " << argv[i] << std::endl;
+      return false;
+    }
+  }
+
+#undef STARTS_WITH
+#undef VALUE_OF
+#undef PARSE_ULL
+
+  return kva_start && ckpt_func_start && ckpt_func_len;
+}
+
+static void plugin_init(const std::string &bench_name) {
+  auto bbv_file_name = bench_name + "_bbv.gz";
+  bbv_file = gzopen(bbv_file_name.c_str(), "w");
+  hotblocks = g_hash_table_new(NULL, NULL);
+}
+
 static void plugin_exit(qemu_plugin_id_t id, void *p) {
   lock.lock();
 
@@ -76,12 +131,6 @@ static void plugin_exit(qemu_plugin_id_t id, void *p) {
 
   lock.unlock();
   gzclose(bbv_file);
-}
-
-static void plugin_init(const std::string &bench_name) {
-  auto bbv_file_name = bench_name + "_bbv.gz";
-  bbv_file = gzopen(bbv_file_name.c_str(), "w");
-  hotblocks = g_hash_table_new(NULL, NULL);
 }
 
 static void tb_exec(unsigned int cpu_index, void *udata) {
@@ -158,8 +207,9 @@ QEMU_PLUGIN_EXPORT
 int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_t *info, int argc,
                         char **argv) {
   std::string bench_name("trace");
-  if (argc) {
-    bench_name = argv[0];
+  if (!parse_args(argc, argv, bench_name)) {
+    show_usage();
+    return 1;
   }
   plugin_init(bench_name);
 
