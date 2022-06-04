@@ -26,12 +26,13 @@ extern "C" {
 #include <unordered_map>
 #include <vector>
 
-#define INTERVAL_SIZE 100000000 /* 100M instructions */
+/* Physical memory start address of Proxy Kernel */
+#define MEM_START 0x80000000
 
 QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
 /* Command line arguments */
-static uint64_t kva_start, ckpt_func_start, ckpt_func_len;
+static uint64_t ckpt_func_start, ckpt_func_len;
 
 /* Plugins need to take care of their own locking */
 static std::mutex lock;
@@ -58,10 +59,6 @@ struct ExecCount {
   uint64_t id;
   uint64_t trans_count;
   uint64_t insns;
-
-  bool operator<(const ExecCount &elem) const {
-    return exec_count > elem.exec_count;
-  }
 };
 
 static std::unordered_map<uint64_t, ExecCount> hotblocks_map;
@@ -74,7 +71,6 @@ static gint cmp_exec_count(gconstpointer a, gconstpointer b) {
 
 static void show_usage() {
   std::cerr << "Available options:" << std::endl;
-  std::cerr << "  kva=<kernel VA start>" << std::endl;
   std::cerr << "  ckpt_start=<checkpoint func start>" << std::endl;
   std::cerr << "  ckpt_len=<checkpoint func len>" << std::endl;
   std::cerr << "  [name=<bench name>]" << std::endl;
@@ -96,9 +92,7 @@ static bool parse_args(int argc, char **argv, std::string &bench_name) {
   } while (0)
 
   for (int i = 0; i < argc; ++i) {
-    if (STARTS_WITH(argv[i], "kva")) {
-      PARSE_ULL(kva_start, argv[i], "kva", "kernel VA start");
-    } else if (STARTS_WITH(argv[i], "ckpt_start")) {
+    if (STARTS_WITH(argv[i], "ckpt_start")) {
       PARSE_ULL(ckpt_func_start, argv[i], "ckpt_start",
                 "checkpoint func start");
     } else if (STARTS_WITH(argv[i], "ckpt_len")) {
@@ -119,7 +113,7 @@ static bool parse_args(int argc, char **argv, std::string &bench_name) {
 #undef VALUE_OF
 #undef PARSE_ULL
 
-  return kva_start && ckpt_func_start && ckpt_func_len;
+  return ckpt_func_start && ckpt_func_len;
 }
 
 static void plugin_init(const std::string &bench_name) {
@@ -130,11 +124,6 @@ static void plugin_init(const std::string &bench_name) {
 
 /* lock required for this function */
 static void dump_bbv() {
-  std::vector<ExecCount> hotblocks_vec;
-  std::transform(hotblocks_map.begin(), hotblocks_map.end(),
-                 std::back_inserter(hotblocks_vec),
-                 [](auto &el) { return el.second; });
-  std::sort(hotblocks_vec.begin(), hotblocks_vec.end());
   auto counts = g_hash_table_get_values(hotblocks);
   auto it = g_list_sort(counts, cmp_exec_count);
 
@@ -174,6 +163,10 @@ static void user_exec(unsigned int cpu_index, void *udata) {
     /* skip the first checkpoint */
     if (is_first_ckpt) {
       is_first_ckpt = false;
+      auto zero_exec_count = [](gpointer data, gpointer udata) {
+        reinterpret_cast<ExecCount *>(data)->exec_count = 0;
+      };
+      g_list_foreach(g_hash_table_get_values(hotblocks), zero_exec_count, NULL);
     } else {
       dump_bbv();
     }
@@ -215,7 +208,7 @@ static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
   size_t insns = qemu_plugin_tb_n_insns(tb);
   uint64_t hash = pc ^ insns;
 
-  if (pc < kva_start) {
+  if (pc < MEM_START) {
     auto cnt = insert_exec_count(pc, insns, hash);
 
     /* count the number of instructions executed */
