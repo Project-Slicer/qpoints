@@ -105,6 +105,10 @@ static bool parse_args(int argc, char **argv, std::string &bench_name) {
       PARSE_ULL(ckpt_func_len, argv[i], "ckpt_len", "checkpoint func len");
     } else if (STARTS_WITH(argv[i], "name")) {
       bench_name = VALUE_OF(argv[i], "name");
+      if (bench_name.empty()) {
+        std::cerr << "Bench name can not be empty" << std::endl;
+        return false;
+      }
     } else {
       std::cerr << "Unknown option: " << argv[i] << std::endl;
       return false;
@@ -154,11 +158,11 @@ static void dump_bbv() {
 static void plugin_exit(qemu_plugin_id_t id, void *p) {
   lock.lock();
 
-  dump_bbv();
+  if (!is_first_ckpt) dump_bbv();
 
-  hotblocks_map.clear();
   auto it = g_hash_table_get_values(hotblocks);
   if (it) g_list_free(it);
+  hotblocks_map.clear();
 
   lock.unlock();
   gzclose(bbv_file);
