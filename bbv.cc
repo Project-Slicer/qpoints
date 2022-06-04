@@ -38,7 +38,9 @@ static std::mutex lock;
 static GHashTable *hotblocks;
 
 static uint64_t unique_trans_id = 0; /* unique id assigned to TB */
-static uint64_t inst_count = 0;      /* executed instruction count */
+static uint64_t ckpt_exec_num = 0; /* number of times ckpt func was executed */
+
+static bool is_first_ckpt = true;
 
 static gzFile bbv_file;
 
@@ -122,8 +124,37 @@ static void plugin_init(const std::string &bench_name) {
   hotblocks = g_hash_table_new(NULL, NULL);
 }
 
+/* lock required for this function */
+static void dump_bbv() {
+  std::vector<ExecCount> hotblocks_vec;
+  std::transform(hotblocks_map.begin(), hotblocks_map.end(),
+                 std::back_inserter(hotblocks_vec),
+                 [](auto &el) { return el.second; });
+  std::sort(hotblocks_vec.begin(), hotblocks_vec.end());
+  auto counts = g_hash_table_get_values(hotblocks);
+  auto it = g_list_sort(counts, cmp_exec_count);
+
+  if (it) {
+    std::ostringstream bb_stat;
+    bb_stat << "T";
+
+    for (; it; it = it->next) {
+      auto rec = reinterpret_cast<ExecCount *>(it->data);
+      if (rec->exec_count) {
+        bb_stat << " :" << rec->id << ":" << rec->exec_count * rec->insns;
+        rec->exec_count = 0;
+      }
+    }
+
+    bb_stat << std::endl;
+    gzwrite(bbv_file, bb_stat.str().c_str(), bb_stat.str().length());
+  }
+}
+
 static void plugin_exit(qemu_plugin_id_t id, void *p) {
   lock.lock();
+
+  dump_bbv();
 
   hotblocks_map.clear();
   auto it = g_hash_table_get_values(hotblocks);
@@ -133,42 +164,21 @@ static void plugin_exit(qemu_plugin_id_t id, void *p) {
   gzclose(bbv_file);
 }
 
-static void tb_exec(unsigned int cpu_index, void *udata) {
+static void user_exec(unsigned int cpu_index, void *udata) {
   lock.lock();
-  if (inst_count >= INTERVAL_SIZE) {
-    std::vector<ExecCount> hotblocks_vec;
-    std::transform(hotblocks_map.begin(), hotblocks_map.end(),
-                   std::back_inserter(hotblocks_vec),
-                   [](auto &el) { return el.second; });
-    std::sort(hotblocks_vec.begin(), hotblocks_vec.end());
-    auto counts = g_hash_table_get_values(hotblocks);
-    auto it = g_list_sort(counts, cmp_exec_count);
-
-    if (it) {
-      std::ostringstream bb_stat;
-      bb_stat << "T";
-
-      for (; it; it = it->next) {
-        auto rec = reinterpret_cast<ExecCount *>(it->data);
-        if (rec->exec_count) {
-          bb_stat << " :" << rec->id << ":" << rec->exec_count * rec->insns;
-          rec->exec_count = 0;
-        }
-      }
-
-      bb_stat << std::endl;
-      gzwrite(bbv_file, bb_stat.str().c_str(), bb_stat.str().length());
-      inst_count = 0;
+  if (ckpt_exec_num) {
+    /* skip the first checkpoint */
+    if (is_first_ckpt) {
+      is_first_ckpt = false;
+    } else {
+      dump_bbv();
     }
+    ckpt_exec_num = 0;
   }
   lock.unlock();
 }
 
-static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
-  uint64_t pc = qemu_plugin_tb_vaddr(tb);
-  size_t insns = qemu_plugin_tb_n_insns(tb);
-  uint64_t hash = pc ^ insns;
-
+static ExecCount *insert_exec_count(uint64_t pc, size_t insns, uint64_t hash) {
   lock.lock();
   auto el = hotblocks_map.find(hash);
   auto cnt = reinterpret_cast<ExecCount *>(
@@ -193,14 +203,27 @@ static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
   }
 
   lock.unlock();
+  return cnt;
+}
 
-  /* count the number of instructions executed */
-  qemu_plugin_register_vcpu_tb_exec_inline(tb, QEMU_PLUGIN_INLINE_ADD_U64,
-                                           &cnt->exec_count, 1);
-  qemu_plugin_register_vcpu_tb_exec_inline(tb, QEMU_PLUGIN_INLINE_ADD_U64,
-                                           &inst_count, insns);
-  qemu_plugin_register_vcpu_tb_exec_cb(tb, tb_exec, QEMU_PLUGIN_CB_NO_REGS,
-                                       reinterpret_cast<void *>(hash));
+static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
+  uint64_t pc = qemu_plugin_tb_vaddr(tb);
+  size_t insns = qemu_plugin_tb_n_insns(tb);
+  uint64_t hash = pc ^ insns;
+
+  if (pc < kva_start) {
+    auto cnt = insert_exec_count(pc, insns, hash);
+
+    /* count the number of instructions executed */
+    qemu_plugin_register_vcpu_tb_exec_inline(tb, QEMU_PLUGIN_INLINE_ADD_U64,
+                                             &cnt->exec_count, 1);
+    qemu_plugin_register_vcpu_tb_exec_cb(tb, user_exec, QEMU_PLUGIN_CB_NO_REGS,
+                                         reinterpret_cast<void *>(hash));
+  } else if (pc >= ckpt_func_start && pc < ckpt_func_start + ckpt_func_len) {
+    /* count the number of checkpoint function executed */
+    qemu_plugin_register_vcpu_tb_exec_inline(tb, QEMU_PLUGIN_INLINE_ADD_U64,
+                                             &ckpt_exec_num, 1);
+  }
 }
 
 QEMU_PLUGIN_EXPORT
