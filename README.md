@@ -1,36 +1,33 @@
 # qpoints
-Qemu tracing plugin using SimPoints
 
-Compiling
----
-Set QEMU_DIR to point to the qemu source folder before running make.
+QEMU tracing plugin using SimPoints, for generating BBV (Basic Block Vector) for Proxy Kernel with process slicing.
 
+## Compiling
+
+Set `QEMU_DIR` to point to the QEMU source folder before running `make`.
+
+```sh
+make QEMU_DIR=/path/to/qemu
 ```
-$ export QEMU_DIR=/path/to/qemu
-$ make
+
+## Running
+
+```sh
+./qemu-system-riscv64 -nographic -machine spike -bios none -d plugin \
+    -plugin /path/to/qpoints/libbbv.so,ckpt_start=<checkpoint_func_start>,ckpt_len=<checkpoint_func_len> \
+    -kernel /path/to/pk -append "benchmark related arguments"
 ```
 
-Running
----
+You should see `trace_bbv.gz` after running the above command.
 
-$ ./qemu-aarch64 -d plugin -plugin ../../qpoints/libbbv.so,arg=<bench_name> /path/to/benchmark/
+The BBV file is processed by the SimPoints binary to create the simpoints and
+weights file:
 
-You should see two files: <bench_name>_bbv.gz and <bench_name>_pc.txt
+```sh
+/path/to/SimPoint.3.2/bin/simpoint -inputVectorsGzipped -loadFVFile trace_bbv.gz -maxK 10 -saveSimpoints trace.simpts  -saveSimpointWeights trace.weights
+```
 
-The bbv file is processed by the SimPoints binary to create the simpoints and
-weights file.
+## Related
 
-$ ./SimPoint.3.2/bin/simpoint -inputVectorsGzipped -loadFVFile <bench_name>_bbv.gz -k 10 -saveSimpoints <bench_name>.simpts  -saveSimpointWeights <bench_name>.weights
-
-The generated simpts and weights file are used by the tracer plugin to generate
-traces.
-
-Then you run tracer to generate the traces.
-
-$ ./qemu-aarch64 -d plugin -plugin ../../qpoints/libtracer.so,arg=<bench_name> /path/to/benchmark/
-
-Related
----
-
-See http://web.eece.maine.edu/~vweaver/projects/qemusim/
-
+* **The original repository** https://github.com/pranith/qpoints/.
+* **SimPoint:** http://web.eece.maine.edu/~vweaver/projects/qemusim/.
