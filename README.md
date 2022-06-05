@@ -18,13 +18,13 @@ make QEMU_DIR=/path/to/qemu
     -kernel /path/to/pk -append "benchmark related arguments"
 ```
 
-You should see `trace_bbv.gz` after running the above command.
+You should see `bbv.gz` after running the above command.
 
 The BBV file is processed by the SimPoints binary to create the simpoints and
 weights file:
 
 ```sh
-/path/to/SimPoint.3.2/bin/simpoint -inputVectorsGzipped -loadFVFile trace_bbv.gz -maxK 10 -saveSimpoints trace.simpts  -saveSimpointWeights trace.weights
+/path/to/SimPoint.3.2/bin/simpoint -inputVectorsGzipped -loadFVFile bbv.gz -maxK 10 -saveSimpoints trace.simpts  -saveSimpointWeights trace.weights
 ```
 
 ## Related
