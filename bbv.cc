@@ -63,12 +63,6 @@ struct ExecCount {
 
 static std::unordered_map<uint64_t, ExecCount> hotblocks_map;
 
-static gint cmp_exec_count(gconstpointer a, gconstpointer b) {
-  auto ea = reinterpret_cast<const ExecCount *>(a);
-  auto eb = reinterpret_cast<const ExecCount *>(b);
-  return (ea->exec_count * ea->insns) > (eb->exec_count * eb->insns) ? -1 : 1;
-}
-
 static void show_usage() {
   std::cerr << "Available options:" << std::endl;
   std::cerr << "  ckpt_start=<checkpoint func start>" << std::endl;
@@ -124,10 +118,7 @@ static void plugin_init(const std::string &bench_name) {
 
 /* lock required for this function */
 static void dump_bbv() {
-  auto counts = g_hash_table_get_values(hotblocks);
-  auto it = g_list_sort(counts, cmp_exec_count);
-
-  if (it) {
+  if (auto it = g_hash_table_get_values(hotblocks)) {
     std::ostringstream bb_stat;
     bb_stat << "T";
 
@@ -193,7 +184,7 @@ static ExecCount *insert_exec_count(uint64_t pc, size_t insns, uint64_t hash) {
     g_hash_table_insert(hotblocks, reinterpret_cast<gpointer>(hash), cnt);
   }
 
-  if (hotblocks_map.find(hash) != hotblocks_map.end()) {
+  if (el != hotblocks_map.end()) {
     el->second.trans_count++;
   } else {
     hotblocks_map.insert({hash, *cnt});
