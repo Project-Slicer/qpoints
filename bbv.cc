@@ -20,7 +20,9 @@ extern "C" {
 #include <sstream>
 
 /* Physical memory start address of Proxy Kernel */
+#ifndef MEM_START
 #define MEM_START 0x80000000
+#endif
 
 QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
