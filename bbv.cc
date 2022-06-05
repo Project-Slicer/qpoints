@@ -1,9 +1,10 @@
 /*
  * Copyright (C) 2020, Pranith Kumar <bobby.prani@gmail.com>
+ * Copyright (C) 2022, Max Xing <x@maxxsoft.net>
  *
- * Find the hot regions of code in intervals of 100M instructions
- *
+ * Generate BBV (Basic Block Vector) for Proxy Kernel with process slicing.
  */
+
 extern "C" {
 #include "qemu-plugin.h"
 }
