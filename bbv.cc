@@ -58,10 +58,10 @@ static void show_usage() {
   std::cerr << "Available options:" << std::endl;
   std::cerr << "  ckpt_start=<checkpoint func start>" << std::endl;
   std::cerr << "  ckpt_len=<checkpoint func len>" << std::endl;
-  std::cerr << "  [name=<bench name>]" << std::endl;
+  std::cerr << "  [bbv_file=<BBV file name>]" << std::endl;
 }
 
-static bool parse_args(int argc, char **argv, std::string &bench_name) {
+static bool parse_args(int argc, char **argv, std::string &bbv_file_name) {
 #define STARTS_WITH(str, prefix) \
   (strncmp(str, prefix "=", sizeof(prefix "=") - 1) == 0)
 #define VALUE_OF(str, prefix) (str + sizeof(prefix "=") - 1)
@@ -82,10 +82,10 @@ static bool parse_args(int argc, char **argv, std::string &bench_name) {
                 "checkpoint func start");
     } else if (STARTS_WITH(argv[i], "ckpt_len")) {
       PARSE_ULL(ckpt_func_len, argv[i], "ckpt_len", "checkpoint func len");
-    } else if (STARTS_WITH(argv[i], "name")) {
-      bench_name = VALUE_OF(argv[i], "name");
-      if (bench_name.empty()) {
-        std::cerr << "Bench name can not be empty" << std::endl;
+    } else if (STARTS_WITH(argv[i], "bbv_file")) {
+      bbv_file_name = VALUE_OF(argv[i], "bbv_file");
+      if (bbv_file_name.empty()) {
+        std::cerr << "BBV file name can not be empty" << std::endl;
         return false;
       }
     } else {
@@ -101,8 +101,7 @@ static bool parse_args(int argc, char **argv, std::string &bench_name) {
   return ckpt_func_start && ckpt_func_len;
 }
 
-static void plugin_init(const std::string &bench_name) {
-  auto bbv_file_name = bench_name + "_bbv.gz";
+static void plugin_init(const std::string &bbv_file_name) {
   bbv_file = gzopen(bbv_file_name.c_str(), "w");
   hotblocks = g_hash_table_new(NULL, NULL);
 }
@@ -195,12 +194,12 @@ static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
 QEMU_PLUGIN_EXPORT
 int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_t *info, int argc,
                         char **argv) {
-  std::string bench_name("trace");
-  if (!parse_args(argc, argv, bench_name)) {
+  std::string bbv_file_name("bbv.gz");
+  if (!parse_args(argc, argv, bbv_file_name)) {
     show_usage();
     return 1;
   }
-  plugin_init(bench_name);
+  plugin_init(bbv_file_name);
 
   qemu_plugin_register_vcpu_tb_trans_cb(id, tb_record);
   qemu_plugin_register_atexit_cb(id, plugin_exit, NULL);
