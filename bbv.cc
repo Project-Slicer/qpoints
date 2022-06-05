@@ -8,23 +8,15 @@ extern "C" {
 #include "qemu-plugin.h"
 }
 
-#include <assert.h>
 #include <glib.h>
-#include <inttypes.h>
-#include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <zlib.h>
 
-#include <algorithm>
-#include <fstream>
 #include <iostream>
-#include <iterator>
 #include <mutex>
 #include <sstream>
-#include <unordered_map>
-#include <vector>
 
 /* Physical memory start address of Proxy Kernel */
 #define MEM_START 0x80000000
@@ -54,14 +46,10 @@ static gzFile bbv_file;
  * differentiate.
  */
 struct ExecCount {
-  uint64_t start_addr;
-  uint64_t exec_count;
   uint64_t id;
-  uint64_t trans_count;
   uint64_t insns;
+  uint64_t exec_count;
 };
-
-static std::unordered_map<uint64_t, ExecCount> hotblocks_map;
 
 static void show_usage() {
   std::cerr << "Available options:" << std::endl;
@@ -142,7 +130,6 @@ static void plugin_exit(qemu_plugin_id_t id, void *p) {
 
   auto it = g_hash_table_get_values(hotblocks);
   if (it) g_list_free(it);
-  hotblocks_map.clear();
 
   lock.unlock();
   gzclose(bbv_file);
@@ -166,28 +153,16 @@ static void user_exec(unsigned int cpu_index, void *udata) {
   lock.unlock();
 }
 
-static ExecCount *insert_exec_count(uint64_t pc, size_t insns, uint64_t hash) {
+static ExecCount *insert_exec_count(size_t insns, uint64_t hash) {
   lock.lock();
-  auto el = hotblocks_map.find(hash);
+
   auto cnt = reinterpret_cast<ExecCount *>(
       g_hash_table_lookup(hotblocks, reinterpret_cast<gconstpointer>(hash)));
-  if (cnt) {
-    assert(el != hotblocks_map.end());
-    assert(el->second.trans_count == cnt->trans_count);
-    cnt->trans_count++;
-  } else {
+  if (!cnt) {
     cnt = g_new0(ExecCount, 1);
-    cnt->start_addr = pc;
-    cnt->trans_count = 1;
     cnt->id = ++unique_trans_id;
     cnt->insns = insns;
     g_hash_table_insert(hotblocks, reinterpret_cast<gpointer>(hash), cnt);
-  }
-
-  if (el != hotblocks_map.end()) {
-    el->second.trans_count++;
-  } else {
-    hotblocks_map.insert({hash, *cnt});
   }
 
   lock.unlock();
@@ -200,7 +175,7 @@ static void tb_record(qemu_plugin_id_t id, struct qemu_plugin_tb *tb) {
   uint64_t hash = pc ^ insns;
 
   if (pc < MEM_START) {
-    auto cnt = insert_exec_count(pc, insns, hash);
+    auto cnt = insert_exec_count(insns, hash);
 
     /* count the number of instructions executed */
     qemu_plugin_register_vcpu_tb_exec_inline(tb, QEMU_PLUGIN_INLINE_ADD_U64,
